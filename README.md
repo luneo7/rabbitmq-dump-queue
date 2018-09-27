@@ -2,12 +2,9 @@
 
 Dump messages from a RabbitMQ queue to files, without affecting the queue.
 
+This work is derivated from https://github.com/dubek/rabbitmq-dump-queue
+
 ## Installation
-
-### Download a release
-
-Precompiled binary packages can be found on the
-[releases](https://github.com/dubek/rabbitmq-dump-queue/releases) page.
 
 ### Compile from source
 
@@ -15,7 +12,7 @@ If you have [Go](https://golang.org/doc/install) installed, you can install
 rabbitmq-dump-queue from source by running:
 
 ```
-go get github.com/dubek/rabbitmq-dump-queue
+go get github.com/luneo7/rabbitmq-dump-queue
 ```
 
 The `rabbitmq-dump-queue` executable will be created in the `$GOPATH/bin`
@@ -28,41 +25,57 @@ To dump the first 50 messages of queue `incoming_1` to `/tmp`:
 
     rabbitmq-dump-queue -uri="amqp://user:password@rabbitmq.example.com:5672/" -queue=incoming_1 -max-messages=50 -output-dir=/tmp
 
-This will create the files `/tmp/msg-0000`, `/tmp/msg-0001`, and so on.
+This will create the files `/tmp/msg-0000.json`, `/tmp/msg-0001.json`, and so on.
 
 The output filenames are printed one per line to the standard output; this
 allows piping the output of rabbitmq-dump-queue to `xargs` or similar utilities
 in order to perform further processing on each message (e.g. decompressing,
 decoding, etc.).
 
-To include the AMQP headers and properties in the output, add the `-full`
-option to the command-line.  This will create the following files:
-
-    /tmp/msg-0000
-    /tmp/msg-0000-headers+properties.json
-    /tmp/msg-0001
-    /tmp/msg-0001-headers+properties.json
-    ...
-
-The JSON files have the following structure:
-
-    {
-      "headers": {
-        "x-my-private-header": "my-value"
-      },
-      "properties": {
-        "correlation_id": "XYZ-9876",
-        "delivery_mode": 0,
-        "priority": 5
-      }
-    }
-
-
 By default, it will not acknowledge messages, so they will be requeued.
 Acknowledging messages using the `-ack=true` switch will *remove* them from the
 queue, allowing the user to process new messages (see implementation details).
 
     rabbitmq-dump-queue -uri="amqp://user:password@rabbitmq.example.com:5672/" -queue=incoming_1 -max-messages=50 -output-dir=/tmp -ack=true
+
+If you want to acknowledge a list of specific messages you can create a JSON file
+with the following structure
+
+    {
+        "messages": [
+            {
+                "routingKey" : "testEvent",
+                "containsString" : "email@mail.com",
+                "contains" : [
+                    {
+                        "key": "fieldKeyInContent1",
+                        "value": "fieldValueInContent"
+                    },
+                    {
+                        "key": "fieldKeyInContent2",
+                        "value": 12345
+                    },
+                    {
+                        "key": "fieldKeyInContent3",
+                        "value": true
+                    }
+                ]
+            }
+        ]
+    }
+
+In the above JSON `routingKey` is mandatory, `containsString` and `contains`
+are optional. So you can have only `containsString` or `contains` with the
+proper values. To use the acknowledge json file you should use the
+`-messages-to-ack` parameter:
+
+    rabbitmq-dump-queue -uri="amqp://user:password@rabbitmq.example.com:5672/" -queue=incoming_1 -max-messages=50 -output-dir=/tmp -messages-to-ack=/tmp/ackmessages.json
+
+
+`rabbitmq-dump-queue` is expecting a JSON response in the content of the message
+if it's not the case you can disable it with `json-content` paramater
+
+    rabbitmq-dump-queue -uri="amqp://user:password@rabbitmq.example.com:5672/" -queue=incoming_1 -max-messages=50 -output-dir=/tmp -json-content=false
 
 Running `rabbitmq-dump-queue -help` will list the available command-line
 options.

@@ -8,21 +8,38 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 
 	"github.com/streadway/amqp"
 )
 
 var (
-	uri          = flag.String("uri", "amqp://guest:guest@localhost:5672/", "AMQP URI")
-	insecure_tls = flag.Bool("insecure-tls", false, "Insecure TLS mode: don't check certificates")
-	queue        = flag.String("queue", "", "AMQP queue name")
-	ack          = flag.Bool("ack", false, "Acknowledge messages")
-	maxMessages  = flag.Uint("max-messages", 1000, "Maximum number of messages to dump")
-	outputDir    = flag.String("output-dir", ".", "Directory in which to save the dumped messages")
-	full         = flag.Bool("full", false, "Dump the message, its properties and headers")
-	verbose      = flag.Bool("verbose", false, "Print progress")
+	uri               = flag.String("uri", "amqp://guest:guest@localhost:5672/", "AMQP URI")
+	insecure_tls      = flag.Bool("insecure-tls", false, "Insecure TLS mode: don't check certificates")
+	queue             = flag.String("queue", "", "AMQP queue name")
+	ack               = flag.Bool("ack", false, "Acknowledge messages")
+	maxMessages       = flag.Uint("max-messages", 1000, "Maximum number of messages to dump")
+	outputDir         = flag.String("output-dir", ".", "Directory in which to save the dumped messages")
+	jsonContent       = flag.Bool("json-content", true, "If the content of the message is a JSON object")
+	verbose           = flag.Bool("verbose", false, "Print progress")
+	messagesToAckFile = flag.String("messages-to-ack", "", "File with messages to ack")
 )
+
+type Messages struct {
+	Messages []Message `json:"messages"`
+}
+
+type Message struct {
+	RoutingKey     string    `json:"routingKey"`
+	Contains       []Contain `json:"contains"`
+	ContainsString string    `json:"containsString"`
+}
+
+type Contain struct {
+	Key   string      `json:"key"`
+	Value interface{} `json:"value"`
+}
 
 func main() {
 	flag.Parse()
@@ -31,7 +48,7 @@ func main() {
 		flag.Usage()
 		os.Exit(2)
 	}
-	err := DumpMessagesFromQueue(*uri, *queue, *maxMessages, *outputDir)
+	err := DumpMessagesFromQueue(*uri, *queue, *maxMessages, *outputDir, *messagesToAckFile, *jsonContent)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s\n", err)
 		os.Exit(1)
@@ -50,7 +67,28 @@ func dial(amqpURI string) (*amqp.Connection, error) {
 	return conn, err
 }
 
-func DumpMessagesFromQueue(amqpURI string, queueName string, maxMessages uint, outputDir string) error {
+func DumpMessagesFromQueue(amqpURI string, queueName string, maxMessages uint, outputDir string, messagesToAckFilePath string, isContentJSON bool) error {
+	var messages Messages
+	var ackMessage bool
+	searchToAck := false
+
+	if messagesToAckFilePath != "" {
+		jsonFile, err := os.Open(messagesToAckFilePath)
+		if err != nil {
+			return fmt.Errorf("Opening messages to ack file: %s", err)
+		} else {
+			byteValue, err := ioutil.ReadAll(jsonFile)
+			if err != nil {
+				return fmt.Errorf("Reding sessages to ack file: %s", err)
+			}
+
+			json.Unmarshal(byteValue, &messages)
+			jsonFile.Close()
+			byteValue = nil
+			searchToAck = true
+		}
+	}
+
 	if queueName == "" {
 		return fmt.Errorf("Must supply queue name")
 	}
@@ -72,8 +110,9 @@ func DumpMessagesFromQueue(amqpURI string, queueName string, maxMessages uint, o
 
 	VerboseLog(fmt.Sprintf("Pulling messages from queue %q", queueName))
 	for messagesReceived := uint(0); messagesReceived < maxMessages; messagesReceived++ {
+		ackMessage = *ack
 		msg, ok, err := channel.Get(queueName,
-			*ack, // autoAck
+			ackMessage, // autoAck
 		)
 		if err != nil {
 			return fmt.Errorf("Queue get: %s", err)
@@ -84,30 +123,53 @@ func DumpMessagesFromQueue(amqpURI string, queueName string, maxMessages uint, o
 			break
 		}
 
-		err = SaveMessageToFile(msg.Body, outputDir, messagesReceived)
+		if searchToAck {
+			message_content := string(msg.Body[:])
+			for i := len(messages.Messages) - 1; i >= 0; i-- {
+				if msg.RoutingKey == messages.Messages[i].RoutingKey {
+					containsNeeded := len(messages.Messages[i].Contains)
+					containsFound := 0
+					for j := 0; j < containsNeeded; j++ {
+						search := ""
+						switch messages.Messages[i].Contains[j].Value.(type) {
+						case string:
+							search = "\"" + messages.Messages[i].Contains[j].Key + "\":\"" + messages.Messages[i].Contains[j].Value.(string) + "\""
+						case float64:
+							val := messages.Messages[i].Contains[j].Value.(float64)
+							fmtp := "%." + strconv.Itoa(NumDecPlaces(val)) + "f"
+							search = "\"" + messages.Messages[i].Contains[j].Key + "\":" + fmt.Sprintf(fmtp, val)
+						case bool:
+							search = "\"" + messages.Messages[i].Contains[j].Key + "\":" + fmt.Sprintf("%t", messages.Messages[i].Contains[j].Value.(bool))
+						}
+
+						if search != "" && strings.Contains(message_content, search) {
+							containsFound++
+						}
+					}
+
+					if messages.Messages[i].ContainsString != "" {
+						containsNeeded++
+						if strings.Contains(message_content, messages.Messages[i].ContainsString) {
+							containsFound++
+						}
+					}
+
+					if containsNeeded == containsFound {
+						msg.Ack(true)
+						fmt.Printf("Acked msg-%04d\n", messagesReceived)
+						ackMessage = true
+						messages.Messages = append(messages.Messages[:i], messages.Messages[i+1:]...)
+					}
+				}
+			}
+		}
+
+		err = SaveMessageToFile(msg, outputDir, messagesReceived, isContentJSON, ackMessage)
 		if err != nil {
 			return fmt.Errorf("Save message: %s", err)
 		}
 
-		if *full {
-			err = SavePropsAndHeadersToFile(msg, outputDir, messagesReceived)
-			if err != nil {
-				return fmt.Errorf("Save props and headers: %s", err)
-			}
-		}
 	}
-
-	return nil
-}
-
-func SaveMessageToFile(body []byte, outputDir string, counter uint) error {
-	filePath := GenerateFilePath(outputDir, counter)
-	err := ioutil.WriteFile(filePath, body, 0644)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println(filePath)
 
 	return nil
 }
@@ -125,6 +187,8 @@ func GetProperties(msg amqp.Delivery) map[string]interface{} {
 		"reply_to":         msg.ReplyTo,
 		"type":             msg.Type,
 		"user_id":          msg.UserId,
+		"exchange":         msg.Exchange,
+		"routing_key":      msg.RoutingKey,
 	}
 
 	if !msg.Timestamp.IsZero() {
@@ -140,17 +204,25 @@ func GetProperties(msg amqp.Delivery) map[string]interface{} {
 	return props
 }
 
-func SavePropsAndHeadersToFile(msg amqp.Delivery, outputDir string, counter uint) error {
+func SaveMessageToFile(msg amqp.Delivery, outputDir string, counter uint, isContentJSON bool, wasAcked bool) error {
 	extras := make(map[string]interface{})
 	extras["properties"] = GetProperties(msg)
 	extras["headers"] = msg.Headers
+	extras["acked"] = wasAcked
+	if isContentJSON {
+		var content interface{}
+		json.Unmarshal(msg.Body, &content)
+		extras["content"] = content
+	} else {
+		extras["content"] = string(msg.Body[:])
+	}
 
 	data, err := json.MarshalIndent(extras, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	filePath := GenerateFilePath(outputDir, counter) + "-headers+properties.json"
+	filePath := GenerateFilePath(outputDir, counter)
 	err = ioutil.WriteFile(filePath, data, 0644)
 	if err != nil {
 		return err
@@ -162,11 +234,20 @@ func SavePropsAndHeadersToFile(msg amqp.Delivery, outputDir string, counter uint
 }
 
 func GenerateFilePath(outputDir string, counter uint) string {
-	return path.Join(outputDir, fmt.Sprintf("msg-%04d", counter))
+	return path.Join(outputDir, fmt.Sprintf("msg-%04d.json", counter))
 }
 
 func VerboseLog(msg string) {
 	if *verbose {
 		fmt.Println("*", msg)
 	}
+}
+
+func NumDecPlaces(v float64) int {
+	s := strconv.FormatFloat(v, 'f', -1, 64)
+	i := strings.IndexByte(s, '.')
+	if i > -1 {
+		return len(s) - i - 1
+	}
+	return 0
 }

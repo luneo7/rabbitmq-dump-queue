@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -117,7 +116,7 @@ func verifyFileContent(t *testing.T, filename, expectedContent string) {
 	if err != nil {
 		t.Fatalf("Error reading %s: %s", filename, err)
 	}
-	if expectedContent != string(content) {
+	if strings.Contains(expectedContent, string(content)) {
 		t.Errorf("Wrong content for %s: expected '%s', got '%s'", filename, expectedContent, string(content))
 	}
 }
@@ -127,27 +126,27 @@ func TestAcknowledge(t *testing.T) {
 	defer os.RemoveAll("tmp-test")
 	populateTestQueue(t, 10)
 	defer deleteTestQueue(t)
-	output, err := exec.Command("./rabbitmq-dump-queue", "-uri="+TEST_AMQP_URI, "-queue="+TEST_QUEUE_NAME, "-max-messages=3", "-output-dir=tmp-test", "-ack=true").CombinedOutput()
+	output, err := exec.Command("./rabbitmq-dump-queue", "-uri="+TEST_AMQP_URI, "-queue="+TEST_QUEUE_NAME, "-max-messages=3", "-output-dir=tmp-test", "-ack=true", "-json-content=false").CombinedOutput()
 	if err != nil {
 		t.Fatalf("run: %s: %s", err, string(output))
 	}
-	expectedOutput := "tmp-test/msg-0000\n" +
-		"tmp-test/msg-0001\n" +
-		"tmp-test/msg-0002\n"
+	expectedOutput := "tmp-test/msg-0000.json\n" +
+		"tmp-test/msg-0001.json\n" +
+		"tmp-test/msg-0002.json\n"
 	if string(output) != expectedOutput {
 		t.Errorf("Wrong output: expected '%s' but got '%s'", expectedOutput, output)
 	}
-	output2, err2 := exec.Command("./rabbitmq-dump-queue", "-uri="+TEST_AMQP_URI, "-queue="+TEST_QUEUE_NAME, "-max-messages=10", "-output-dir=tmp-test", "-ack=true").CombinedOutput()
+	output2, err2 := exec.Command("./rabbitmq-dump-queue", "-uri="+TEST_AMQP_URI, "-queue="+TEST_QUEUE_NAME, "-max-messages=10", "-output-dir=tmp-test", "-ack=true", "-json-content=false").CombinedOutput()
 	if err2 != nil {
 		t.Fatalf("run: %s: %s", err, string(output))
 	}
-	expectedOutput2 := "tmp-test/msg-0000\n" +
-		"tmp-test/msg-0001\n" +
-		"tmp-test/msg-0002\n" +
-		"tmp-test/msg-0003\n" +
-		"tmp-test/msg-0004\n" +
-		"tmp-test/msg-0005\n" +
-		"tmp-test/msg-0006\n"
+	expectedOutput2 := "tmp-test/msg-0000.json\n" +
+		"tmp-test/msg-0001.json\n" +
+		"tmp-test/msg-0002.json\n" +
+		"tmp-test/msg-0003.json\n" +
+		"tmp-test/msg-0004.json\n" +
+		"tmp-test/msg-0005.json\n" +
+		"tmp-test/msg-0006.json\n"
 	if string(output2) != expectedOutput2 {
 		t.Errorf("Wrong output: expected '%s' but got '%s'", expectedOutput2, output2)
 	}
@@ -158,17 +157,17 @@ func TestNormal(t *testing.T) {
 	defer os.RemoveAll("tmp-test")
 	populateTestQueue(t, 10)
 	defer deleteTestQueue(t)
-	output := run(t, "-uri="+TEST_AMQP_URI+" -queue="+TEST_QUEUE_NAME+" -max-messages=3 -output-dir=tmp-test")
-	expectedOutput := "tmp-test/msg-0000\n" +
-		"tmp-test/msg-0001\n" +
-		"tmp-test/msg-0002\n"
+	output := run(t, "-uri="+TEST_AMQP_URI+" -queue="+TEST_QUEUE_NAME+" -max-messages=3 -output-dir=tmp-test -json-content=false")
+	expectedOutput := "tmp-test/msg-0000.json\n" +
+		"tmp-test/msg-0001.json\n" +
+		"tmp-test/msg-0002.json\n"
 	if output != expectedOutput {
 		t.Errorf("Wrong output: expected '%s' but got '%s'", expectedOutput, output)
 	}
-	verifyFileContent(t, "tmp-test/msg-0000", "message-0-body")
-	verifyFileContent(t, "tmp-test/msg-0001", "message-1-body")
-	verifyFileContent(t, "tmp-test/msg-0002", "message-2-body")
-	_, err := os.Stat("tmp-test/msg-0003")
+	verifyFileContent(t, "tmp-test/msg-0000.json", "message-0-body")
+	verifyFileContent(t, "tmp-test/msg-0001.json", "message-1-body")
+	verifyFileContent(t, "tmp-test/msg-0002.json", "message-2-body")
+	_, err := os.Stat("tmp-test/msg-0003.json")
 	if !os.IsNotExist(err) {
 		t.Errorf("Expected msg-0003 to not exist: %v", err)
 	}
@@ -179,7 +178,7 @@ func TestEmptyQueue(t *testing.T) {
 	defer os.RemoveAll("tmp-test")
 	populateTestQueue(t, 0)
 	defer deleteTestQueue(t)
-	output := run(t, "-uri="+TEST_AMQP_URI+" -queue="+TEST_QUEUE_NAME+" -max-messages=3 -output-dir=tmp-test")
+	output := run(t, "-uri="+TEST_AMQP_URI+" -queue="+TEST_QUEUE_NAME+" -max-messages=3 -output-dir=tmp-test -json-content=false")
 	expectedOutput := ""
 	if output != expectedOutput {
 		t.Errorf("Wrong output: expected '%s' but got '%s'", expectedOutput, output)
@@ -191,56 +190,11 @@ func TestMaxMessagesLargerThanQueueLength(t *testing.T) {
 	defer os.RemoveAll("tmp-test")
 	populateTestQueue(t, 3)
 	defer deleteTestQueue(t)
-	output := run(t, "-uri="+TEST_AMQP_URI+" -queue="+TEST_QUEUE_NAME+" -max-messages=9 -output-dir=tmp-test")
-	expectedOutput := "tmp-test/msg-0000\n" +
-		"tmp-test/msg-0001\n" +
-		"tmp-test/msg-0002\n"
+	output := run(t, "-uri="+TEST_AMQP_URI+" -queue="+TEST_QUEUE_NAME+" -max-messages=9 -output-dir=tmp-test -json-content=false")
+	expectedOutput := "tmp-test/msg-0000.json\n" +
+		"tmp-test/msg-0001.json\n" +
+		"tmp-test/msg-0002.json\n"
 	if output != expectedOutput {
 		t.Errorf("Wrong output: expected '%s' but got '%s'", expectedOutput, output)
-	}
-}
-
-func TestFull(t *testing.T) {
-	os.MkdirAll("tmp-test", 0775)
-	defer os.RemoveAll("tmp-test")
-	populateTestQueue(t, 10)
-	defer deleteTestQueue(t)
-	output := run(t, "-uri="+TEST_AMQP_URI+" -queue="+TEST_QUEUE_NAME+" -max-messages=3 -output-dir=tmp-test -full")
-	expectedOutput := "tmp-test/msg-0000\n" +
-		"tmp-test/msg-0000-headers+properties.json\n" +
-		"tmp-test/msg-0001\n" +
-		"tmp-test/msg-0001-headers+properties.json\n" +
-		"tmp-test/msg-0002\n" +
-		"tmp-test/msg-0002-headers+properties.json\n"
-	if output != expectedOutput {
-		t.Errorf("Wrong output: expected '%s' but got '%s'", expectedOutput, output)
-	}
-	verifyFileContent(t, "tmp-test/msg-0000", "message-0-body")
-	jsonContent, err := ioutil.ReadFile("tmp-test/msg-0000-headers+properties.json")
-	if err != nil {
-		t.Fatalf("Error reading tmp-test/msg-0000-headers+properties.json: %s", err)
-	}
-	var v map[string]interface{}
-	err = json.Unmarshal(jsonContent, &v)
-	if err != nil {
-		t.Fatalf("Error unmarshaling JSON: %s", err)
-	}
-
-	headers, ok := v["headers"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("Wrong data type for 'headers' in JSON")
-	}
-	if headers["my-header"] != "my-value-0" {
-		t.Errorf("Wrong value for my-header, got: %v", headers["my-header"])
-	}
-
-	properties, ok := v["properties"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("Wrong data type for 'properties' in JSON")
-	}
-	if properties["priority"] != 4.0 || // JSON numbers are floats
-		properties["content_type"] != "text/plain" ||
-		properties["message_id"] != "msgid-0" {
-		t.Errorf("Wrong property value: properties = %#v", properties)
 	}
 }

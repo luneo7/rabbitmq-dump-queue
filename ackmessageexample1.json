@@ -1,0 +1,8 @@
+{
+  "messages": [
+    {
+      "routingKey" : "test",
+      "containsString" : "mail@email.com"
+    }
+  ]
+}
