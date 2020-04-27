@@ -77,6 +77,24 @@ if it's not the case you can disable it with `json-content` paramater
 
     rabbitmq-dump-queue -uri="amqp://user:password@rabbitmq.example.com:5672/" -queue=incoming_1 -max-messages=50 -output-dir=/tmp -json-content=false
 
+
+If you want to post a directory with dumped rabbit messages you can run the following command (it will use the exchange in properties section of the json files):
+
+    rabbitmq-dump-queue -uri="amqp://user:password@rabbitmq.example.com:5672/" -messages-to-post-dir=/tmp 
+
+If you want to post a directory with dumped rabbit messages and you want to tell to which exchange it should post you can run the following command (it will ignore exchange in the json files):
+
+    rabbitmq-dump-queue -uri="amqp://user:password@rabbitmq.example.com:5672/" -messages-to-post-dir=/tmp -new-exchange=new_exchange 
+
+If you want to move the messages from one queue to some exchange you can do:
+
+    rabbitmq-dump-queue -uri="amqp://user:password@rabbitmq.example.com:5672/" -queue=incoming_1 -max-messages=5000 -output-dir=/tmp -new-exchange=new_exchange -ack=true
+
+
+If you want to move the messages from one queue to some exchange in another server you can do:
+
+    rabbitmq-dump-queue -uri="amqp://user:password@rabbitmq.example.com:5672/" -queue=incoming_1 -max-messages=5000 -output-dir=/tmp -new-exchange=new_exchange -new-uri="amqp://user:password@rabbitmq2.example.com:5672/" -ack=true
+
 Running `rabbitmq-dump-queue -help` will list the available command-line
 options.
 
