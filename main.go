@@ -208,7 +208,7 @@ func postMessageToExchange(amqpURI string, dirToPost string, newExchange string)
 			return fmt.Errorf("Publish %s: %s", filePath, err)
 		}
 
-		fmt.Println("Message Published")
+		fmt.Printf("Message Published:%s\n", filePath)
 	}
 
 	return nil
@@ -361,7 +361,6 @@ func dumpMessagesFromQueue(amqpURI string, queueName string, maxMessages uint, o
 
 					if containsNeeded == containsFound {
 						ackMessage = true
-						fmt.Printf("Acked msg-%04d\n", messagesReceived)
 						msgsToAck.Messages = append(msgsToAck.Messages[:i], msgsToAck.Messages[i+1:]...)
 						break
 					}
@@ -371,6 +370,7 @@ func dumpMessagesFromQueue(amqpURI string, queueName string, maxMessages uint, o
 
 		if ackMessage {
 			msg.Ack(false)
+			fmt.Printf("Acked msg-%04d\n", messagesReceived)
 		}
 
 		err = saveMessageToFile(msg, outputDir, messagesReceived, isContentJSON, ackMessage)
